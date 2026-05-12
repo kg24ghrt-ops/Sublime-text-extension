@@ -1,31 +1,35 @@
 name: Build Zed Extension
 on:
   push:
-    tags: ["v*"]
+    branches:
+      - main
+      - master
+  workflow_dispatch: # Allows manual trigger from GitHub UI
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Setup Rust
-        run: |
-          rustup target add wasm32-wasip1
+      - name: Checkout Code
+        uses: actions/checkout@v4[span_2](start_span)[span_2](end_span)
+      
+      - name: Setup Rust WASM
+        run: rustup target add wasm32-wasip1[span_3](start_span)[span_3](end_span)
           
-      - name: Build WASM
-        run: cargo build --release --target wasm32-wasip1
+      - name: Build Extension (Release)
+        run: cargo build --release --target wasm32-wasip1[span_4](start_span)[span_4](end_span)
 
-      - name: Package
+      - name: Package Extension
         run: |
-          mkdir -p dist
-          cp target/wasm32-wasip1/release/novacibes_rust_pro.wasm dist/extension.wasm
-          cp extension.toml dist/
-          zip -j novacibes-pro-v1.zip dist/*
+          mkdir -p dist[span_5](start_span)[span_5](end_span)
+          # Copy the compiled WASM and the manifest[span_6](start_span)[span_6](end_span)
+          cp target/wasm32-wasip1/release/novacibes_rust_pro.wasm dist/extension.wasm[span_7](start_span)[span_7](end_span)
+          cp extension.toml dist/[span_8](start_span)[span_8](end_span)
+          # Create the final ZIP for Zed installation[span_9](start_span)[span_9](end_span)
+          zip -j novacibes-pro-latest.zip dist/*[span_10](start_span)[span_10](end_span)
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: novacibes-pro-v1.zip
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          
+          name: novacibes-extension
+          path: novacibes-pro-latest.zip

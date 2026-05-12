@@ -1,0 +1,13 @@
+id = "novacibes-rust-pro"
+name = "NovaCibes Rust Pro"
+version = "1.1.0"
+schema_version = 1
+authors = ["Ko Ko"]
+description = "Pure Rust remote execution for private HF Spaces."
+
+[lib]
+kind = "wasm"
+
+[capabilities]
+tasks = true
+completions = true

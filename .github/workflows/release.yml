@@ -1,0 +1,31 @@
+name: Build Zed Extension
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Rust
+        run: |
+          rustup target add wasm32-wasip1
+          
+      - name: Build WASM
+        run: cargo build --release --target wasm32-wasip1
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp target/wasm32-wasip1/release/novacibes_rust_pro.wasm dist/extension.wasm
+          cp extension.toml dist/
+          zip -j novacibes-pro-v1.zip dist/*
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: novacibes-pro-v1.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          

@@ -9,5 +9,4 @@ description = "Pure Rust remote execution for private HF Spaces."
 kind = "Rust"
 
 [capabilities]
-tasks = true
-completions = true
+capabilities = ["tasks", "completions"]

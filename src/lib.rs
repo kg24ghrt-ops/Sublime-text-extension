@@ -21,30 +21,19 @@ impl zed::Extension for NovaCibesPythonRunner {
         _worktree: Option<&zed::Worktree>,
     ) -> zed::Result<zed::SlashCommandOutput> {
         match command.name.as_str() {
-            "python-run" => self.execute_code(args),
+            "python-run" => self.execute_code(args, &command),
             "python-stop" => self.stop_execution(),
             _ => Err("Unknown command".into()),
         }
     }
-
-    // This returns the default settings shown to users in the context server config UI
-    fn context_server_settings(
-        &self,
-        _server_id: &zed::ContextServerId,
-    ) -> zed::Result<serde_json::Value> {
-        Ok(serde_json::json!({
-            "huggingface_token": "",
-            "runner_url": "https://novacibes-python-running-api.hf.space"
-        }))
-    }
 }
 
 impl NovaCibesPythonRunner {
-    /// Read the actual user settings from Zed’s settings store
-    fn get_settings(&self) -> zed::Result<(String, String)> {
-        let config = zed::settings::get_context_server_settings("novacibes-python-runner")
-            .ok_or("Extension settings not found. Please add 'novacibes-python-runner' to your context_servers in settings.json.")?;
-        let settings: ContextSettings = serde_json::from_value(config)
+    /// Extract settings from the slash command (filled by the context server config)
+    fn get_settings(&self, command: &zed::SlashCommand) -> zed::Result<(String, String)> {
+        let raw = command.settings.as_ref()
+            .ok_or("Extension settings not found. Add 'novacibes-python-runner' to your context_servers in settings.json.")?;
+        let settings: ContextSettings = serde_json::from_value(raw.clone())
             .map_err(|e| format!("Invalid settings: {}", e))?;
         let token = settings.huggingface_token
             .filter(|t| !t.is_empty())
@@ -53,25 +42,25 @@ impl NovaCibesPythonRunner {
         Ok((token, url))
     }
 
-    fn execute_code(&self, args: Vec<String>) -> zed::Result<zed::SlashCommandOutput> {
+    fn execute_code(&self, args: Vec<String>, command: &zed::SlashCommand) -> zed::Result<zed::SlashCommandOutput> {
         let code = args.join(" ");
         if code.is_empty() {
             return Err("No Python code provided.".into());
         }
 
-        let (token, base_url) = self.get_settings()?;
+        let (token, base_url) = self.get_settings(command)?;
         let url = format!("{}/run", base_url.trim_end_matches('/'));
 
         let request_body = serde_json::json!({ "code": code });
         let body = serde_json::to_string(&request_body).unwrap();
 
-        let response = zed::http_client::fetch(
-            &url,
-            zed::HttpMethod::Post,
-            Some(&body),
-            &[("Content-Type", "application/json"), ("Authorization", &format!("Bearer {}", token))],
-        )?;
+        // Build the HTTP request using the v0.7.0 API
+        let mut req = zed::HttpRequest::new(&url);
+        req.add_header("Content-Type", "application/json");
+        req.add_header("Authorization", &format!("Bearer {}", token));
+        req.set_body(body);
 
+        let response = zed::http_client::fetch(&req)?;
         if response.status != 200 {
             let err_text = String::from_utf8_lossy(&response.body);
             return Err(format!("Runner HTTP {}: {}", response.status, err_text));
@@ -109,7 +98,7 @@ impl NovaCibesPythonRunner {
 
     fn stop_execution(&self) -> zed::Result<zed::SlashCommandOutput> {
         Ok(zed::SlashCommandOutput {
-            text: "Stop command sent. Running processes will be terminated automatically.",
+            text: "Stop command sent. Running processes will be terminated automatically.".into(),
             tooltip: None,
         })
     }

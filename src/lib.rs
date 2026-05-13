@@ -1,11 +1,6 @@
 use zed_extension_api as zed;
 use serde::Deserialize;
-use std::cell::RefCell;
-
-thread_local! {
-    static TOKEN: RefCell<Option<String>> = const { RefCell::new(None) };
-    static URL: RefCell<Option<String>> = const { RefCell::new(None) };
-}
+use std::env;
 
 struct NovaCibesPythonRunner;
 
@@ -29,7 +24,7 @@ impl zed::Extension for NovaCibesPythonRunner {
 
     fn context_server_configuration(
         &mut self,
-        _server_id: &zed::ContextServerId,
+        _context_server_id: &zed::ContextServerId,
         _project: &zed::Project,
     ) -> zed::Result<Option<zed::ContextServerConfiguration>> {
         Ok(Some(zed::ContextServerConfiguration {
@@ -48,37 +43,25 @@ impl zed::Extension for NovaCibesPythonRunner {
                         "default": "https://novacibes-python-running-api.hf.space"
                     }
                 }
-            }).to_string(),
+            })
+            .to_string(),
             default_settings: serde_json::json!({
                 "huggingface_token": "",
                 "runner_url": "https://novacibes-python-running-api.hf.space"
-            }).to_string(),
+            })
+            .to_string(),
         }))
-    }
-
-    fn context_server_configuration_updated(
-        &mut self,
-        _server_id: &zed::ContextServerId,
-        settings: serde_json::Value,
-    ) {
-        if let Some(token) = settings["huggingface_token"].as_str() {
-            TOKEN.with(|t| *t.borrow_mut() = Some(token.to_string()));
-        }
-        if let Some(url) = settings["runner_url"].as_str() {
-            URL.with(|u| *u.borrow_mut() = Some(url.to_string()));
-        }
     }
 }
 
 impl NovaCibesPythonRunner {
-    fn get_settings(&self) -> zed::Result<(String, String)> {
-        let token = TOKEN.with(|t| t.borrow().clone()).ok_or(
-            "Hugging Face token not configured. Open Context Servers → NovaCibes Python Runner and enter your token."
-        )?;
-        let url = URL.with(|u| u.borrow().clone()).unwrap_or(
-            "https://novacibes-python-running-api.hf.space".to_string()
-        );
-        Ok((token, url))
+    fn get_token(&self) -> zed::Result<String> {
+        env::var("HUGGINGFACE_TOKEN").map_err(|_| {
+            "HUGGINGFACE_TOKEN environment variable not set. Please add:\n\
+             export HUGGINGFACE_TOKEN=\"hf_your_token\"\n\
+             to your shell profile and restart Zed."
+                .into()
+        })
     }
 
     fn execute_code(&self, args: Vec<String>) -> zed::Result<zed::SlashCommandOutput> {
@@ -87,20 +70,22 @@ impl NovaCibesPythonRunner {
             return Err("No Python code provided.".into());
         }
 
-        let (token, base_url) = match self.get_settings() {
+        let token = match self.get_token() {
             Ok(t) => t,
             Err(e) => {
                 return Ok(zed::SlashCommandOutput {
-                    text: format!(
-                        "## ⚠️ Token Not Configured\n\n{}\n\nOpen **Context Servers** → NovaCibes Python Runner and enter your token.",
-                        e
-                    ),
+                    text: format!("## ⚠️ Token Not Configured\n\n{}", e),
                     sections: vec![],
                 });
             }
         };
 
-        let url = format!("{}/run", base_url.trim_end_matches('/'));
+        let url = format!(
+            "{}/run",
+            env::var("RUNNER_URL")
+                .unwrap_or("https://novacibes-python-running-api.hf.space".into())
+                .trim_end_matches('/')
+        );
 
         let request_body = serde_json::json!({ "code": code });
         let body_bytes = serde_json::to_vec(&request_body).unwrap();

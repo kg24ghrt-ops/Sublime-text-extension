@@ -1,52 +1,11 @@
 ```toml
-# TOML-specific ignores for extension builds/configs
-*.toml.bak
-*.toml~
-*.backup/
+# TOML-specific ignores if needed
+# (extension.toml is a config file, typically not ignored unless it's auto-generated)
 
-# If extension involves compiled components
-*.so
-*.dylib
-*.dll
-*.exe
-*.o
-*.obj
-
-# Common build artifacts
-build/
-dist/
-target/
-out/
-
-# Dependencies
-node_modules/
-vendor/
-deps/
-
-# Environment and cache
-.env
-.env.local
-.env.*
-.cache/
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Editors and IDEs
-.vscode/
-.idea/
-*.swp
-*.swo
-*.tmp
-
-# Logs
-*.log
-
-# OS files
-.DS_Store
-Thumbs.db
+# However, since only extension.toml was modified and it appears to be a source/config file,
+# no additional ignores are needed based on the change list.
 ```
 
-extension.toml
-```
+Wait, let me reconsider - only `extension.toml` was modified, which appears to be a source/config file. Since there are no build artifacts, dependencies, or temporary files in the changes, nothing should be ignored.
+
+(empty)

@@ -32,10 +32,28 @@ impl zed::Extension for NovaCibesPythonRunner {
         }
     }
 
-    /// This is called when the user updates their context server settings.
+    /// Correct trait signature: &mut self, returns Result<Option<ContextServerConfiguration>, String>
     fn context_server_configuration(
-        &self,
-        server_id: &zed::ContextServerId,
+        &mut self,
+        _server_id: &zed::ContextServerId,
+        _project: &zed::Project,
+    ) -> zed::Result<Option<zed::ContextServerConfiguration>> {
+        // Return the default configuration for the context server.
+        // The user will fill in the token from the Zed settings UI.
+        Ok(Some(zed::ContextServerConfiguration {
+            name: "NovaCibes Python Runner".to_string(),
+            tooltip: Some("Enter your Hugging Face token".into()),
+            settings: serde_json::json!({
+                "huggingface_token": "",
+                "runner_url": "https://novacibes-python-running-api.hf.space"
+            }),
+        }))
+    }
+
+    /// Called when the user saves the context server settings.
+    fn context_server_configuration_updated(
+        &mut self,
+        _server_id: &zed::ContextServerId,
         settings: serde_json::Value,
     ) {
         if let Ok(rs) = serde_json::from_value::<RunnerSettings>(settings) {
@@ -45,19 +63,34 @@ impl zed::Extension for NovaCibesPythonRunner {
 }
 
 impl NovaCibesPythonRunner {
-    /// Get the stored settings, or return an error with a prompt that opens settings.json
     fn get_settings_or_prompt(&self) -> zed::Result<(String, String)> {
         let maybe = SETTINGS.with(|s| s.borrow().clone());
         if let Some(settings) = maybe {
-            if let (Some(token), Some(url)) = (settings.huggingface_token.clone(), settings.runner_url.clone()) {
+            if let Some(token) = settings.huggingface_token {
                 if !token.is_empty() {
+                    let url = settings.runner_url.unwrap_or_else(|| "https://novacibes-python-running-api.hf.space".into());
                     return Ok((token, url));
                 }
             }
         }
 
-        // Token missing → return a special error containing a link to open settings.json
-        Err("Token not configured. Click the file path below to open your settings and add the context server block.\n\n→ file://~/.config/zed/settings.json".into())
+        // Token missing → return an error with instructions.
+        Err(
+            "## ⚠️ Hugging Face Token Missing\n\n\
+            Click the **Context Servers** button in the Assistant Panel or run \
+            `context-server: configure` to open settings, then paste your token.\n\n\
+            Alternatively, add this to your `settings.json`:\n\
+            ```json\n\
+            \"context_servers\": {\n\
+              \"novacibes-python-runner\": {\n\
+                \"settings\": {\n\
+                  \"huggingface_token\": \"hf_your_token\"\n\
+                }\n\
+              }\n\
+            }\n\
+            ```"
+                .into(),
+        )
     }
 
     fn execute_code(&self, args: Vec<String>) -> zed::Result<zed::SlashCommandOutput> {
@@ -69,27 +102,10 @@ impl NovaCibesPythonRunner {
         let (token, base_url) = match self.get_settings_or_prompt() {
             Ok(t) => t,
             Err(e) => {
-                // Return a SlashCommandOutput that includes a clickable file link.
-                // We use a section pointing to the settings file.
-                let settings_path = dirs::home_dir()
-                    .unwrap_or_default()
-                    .join(".config/zed/settings.json")
-                    .to_string_lossy()
-                    .to_string();
-
-                let section = zed::SlashCommandOutputSection {
-                    range: zed::Range {
-                        start: zed::Point::new(0, 0), // opens the file
-                        end: zed::Point::new(0, 0),
-                    },
-                    label: "Open settings.json".to_string(),
-                };
-
+                // Show the prompt message as output
                 return Ok(zed::SlashCommandOutput {
-                    text: format!(
-                        "## ⚠️ Missing Token\n\nPaste the following into your `settings.json`:\n\n```json\n\"context_servers\": {{\n  \"novacibes-python-runner\": {{\n    \"settings\": {{\n      \"huggingface_token\": \"hf_your_token_here\"\n    }}\n  }}\n}}\n```"
-                    ),
-                    sections: vec![section],
+                    text: e,
+                    sections: vec![],
                 });
             }
         };
@@ -99,13 +115,15 @@ impl NovaCibesPythonRunner {
         let request_body = serde_json::json!({ "code": code });
         let body_bytes = serde_json::to_vec(&request_body).unwrap();
 
+        // Build the HTTP request (HttpRequestBuilder::build returns Result<HttpRequest, String>)
         let request = zed::http_client::HttpRequestBuilder::new()
             .method(zed::http_client::HttpMethod::Post)
             .url(&url)
             .header("Content-Type", "application/json")
             .header("Authorization", &format!("Bearer {}", token))
             .body(body_bytes)
-            .build();
+            .build()
+            .map_err(|e| format!("Failed to build request: {}", e))?;
 
         let response = zed::http_client::fetch(&request)?;
 

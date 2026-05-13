@@ -1,34 +1,28 @@
-name: Build Zed Extension
+name: Build WASM Extension
+
 on:
   push:
-    branches:
-      - main
-      - master
-  workflow_dispatch:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:   # So you can trigger it manually
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Rust WASM
-        run: rustup target add wasm32-wasip1
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
 
-      - name: Build Extension (Release)
-        run: cargo build --release --target wasm32-wasip1
+      - name: Build extension
+        run: cargo build --release --target wasm32-wasip2
 
-      - name: Package Extension
-        run: |
-          mkdir -p dist
-          # Ensure the filename matches your Cargo.toml package name
-          cp target/wasm32-wasip1/release/novacibes_rust_pro.wasm dist/extension.wasm
-          cp extension.toml dist/
-          zip -j novacibes-pro-latest.zip dist/*
-
-      - name: Upload Build Artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: novacibes-extension
-          path: novacibes-pro-latest.zip
+          name: novacibes-python-runner.wasm
+          path: target/wasm32-wasip2/release/novacibes_python_runner.wasm

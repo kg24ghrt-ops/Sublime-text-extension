@@ -1,13 +1,18 @@
 use zed_extension_api as zed;
 use serde::Deserialize;
+use std::cell::RefCell;
 
-struct NovaCibesPythonRunner;
+thread_local! {
+    static SETTINGS: RefCell<Option<RunnerSettings>> = const { RefCell::new(None) };
+}
 
-#[derive(Deserialize)]
-struct ContextSettings {
+#[derive(Deserialize, Clone)]
+struct RunnerSettings {
     huggingface_token: Option<String>,
     runner_url: Option<String>,
 }
+
+struct NovaCibesPythonRunner;
 
 impl zed::Extension for NovaCibesPythonRunner {
     fn new() -> Self {
@@ -21,50 +26,88 @@ impl zed::Extension for NovaCibesPythonRunner {
         _worktree: Option<&zed::Worktree>,
     ) -> zed::Result<zed::SlashCommandOutput> {
         match command.name.as_str() {
-            "python-run" => self.execute_code(args, &command),
+            "python-run" => self.execute_code(args),
             "python-stop" => self.stop_execution(),
             _ => Err("Unknown command".into()),
+        }
+    }
+
+    /// This is called when the user updates their context server settings.
+    fn context_server_configuration(
+        &self,
+        server_id: &zed::ContextServerId,
+        settings: serde_json::Value,
+    ) {
+        if let Ok(rs) = serde_json::from_value::<RunnerSettings>(settings) {
+            SETTINGS.with(|s| *s.borrow_mut() = Some(rs));
         }
     }
 }
 
 impl NovaCibesPythonRunner {
-    /// Extract settings from the slash command (filled by the context server config)
-    fn get_settings(&self, command: &zed::SlashCommand) -> zed::Result<(String, String)> {
-        let raw = command.settings.as_ref()
-            .ok_or("Extension settings not found. Add 'novacibes-python-runner' to your context_servers in settings.json.")?;
-        let settings: ContextSettings = serde_json::from_value(raw.clone())
-            .map_err(|e| format!("Invalid settings: {}", e))?;
-        let token = settings.huggingface_token
-            .filter(|t| !t.is_empty())
-            .ok_or("Hugging Face token missing. Set it in Settings → Context Servers → NovaCibes Python Runner.")?;
-        let url = settings.runner_url.unwrap_or_else(|| "https://novacibes-python-running-api.hf.space".to_string());
-        Ok((token, url))
+    /// Get the stored settings, or return an error with a prompt that opens settings.json
+    fn get_settings_or_prompt(&self) -> zed::Result<(String, String)> {
+        let maybe = SETTINGS.with(|s| s.borrow().clone());
+        if let Some(settings) = maybe {
+            if let (Some(token), Some(url)) = (settings.huggingface_token.clone(), settings.runner_url.clone()) {
+                if !token.is_empty() {
+                    return Ok((token, url));
+                }
+            }
+        }
+
+        // Token missing → return a special error containing a link to open settings.json
+        Err("Token not configured. Click the file path below to open your settings and add the context server block.\n\n→ file://~/.config/zed/settings.json".into())
     }
 
-    fn execute_code(&self, args: Vec<String>, command: &zed::SlashCommand) -> zed::Result<zed::SlashCommandOutput> {
+    fn execute_code(&self, args: Vec<String>) -> zed::Result<zed::SlashCommandOutput> {
         let code = args.join(" ");
         if code.is_empty() {
             return Err("No Python code provided.".into());
         }
 
-        let (token, base_url) = self.get_settings(command)?;
+        let (token, base_url) = match self.get_settings_or_prompt() {
+            Ok(t) => t,
+            Err(e) => {
+                // Return a SlashCommandOutput that includes a clickable file link.
+                // We use a section pointing to the settings file.
+                let settings_path = dirs::home_dir()
+                    .unwrap_or_default()
+                    .join(".config/zed/settings.json")
+                    .to_string_lossy()
+                    .to_string();
+
+                let section = zed::SlashCommandOutputSection {
+                    range: zed::Range {
+                        start: zed::Point::new(0, 0), // opens the file
+                        end: zed::Point::new(0, 0),
+                    },
+                    label: "Open settings.json".to_string(),
+                };
+
+                return Ok(zed::SlashCommandOutput {
+                    text: format!(
+                        "## ⚠️ Missing Token\n\nPaste the following into your `settings.json`:\n\n```json\n\"context_servers\": {{\n  \"novacibes-python-runner\": {{\n    \"settings\": {{\n      \"huggingface_token\": \"hf_your_token_here\"\n    }}\n  }}\n}}\n```"
+                    ),
+                    sections: vec![section],
+                });
+            }
+        };
+
         let url = format!("{}/run", base_url.trim_end_matches('/'));
 
         let request_body = serde_json::json!({ "code": code });
-        let body = serde_json::to_string(&request_body).unwrap();
+        let body_bytes = serde_json::to_vec(&request_body).unwrap();
 
-        // Build the HTTP request using the v0.7.0 API
-        let mut req = zed::HttpRequest::new(&url);
-        req.add_header("Content-Type", "application/json");
-        req.add_header("Authorization", &format!("Bearer {}", token));
-        req.set_body(body);
+        let request = zed::http_client::HttpRequestBuilder::new()
+            .method(zed::http_client::HttpMethod::Post)
+            .url(&url)
+            .header("Content-Type", "application/json")
+            .header("Authorization", &format!("Bearer {}", token))
+            .body(body_bytes)
+            .build();
 
-        let response = zed::http_client::fetch(&req)?;
-        if response.status != 200 {
-            let err_text = String::from_utf8_lossy(&response.body);
-            return Err(format!("Runner HTTP {}: {}", response.status, err_text));
-        }
+        let response = zed::http_client::fetch(&request)?;
 
         #[derive(Deserialize)]
         struct RunResult {
@@ -92,14 +135,14 @@ impl NovaCibesPythonRunner {
 
         Ok(zed::SlashCommandOutput {
             text: output,
-            tooltip: None,
+            sections: vec![],
         })
     }
 
     fn stop_execution(&self) -> zed::Result<zed::SlashCommandOutput> {
         Ok(zed::SlashCommandOutput {
-            text: "Stop command sent. Running processes will be terminated automatically.".into(),
-            tooltip: None,
+            text: "Stop command sent. Processes will terminate automatically.".into(),
+            sections: vec![],
         })
     }
 }
